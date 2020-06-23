@@ -83,13 +83,10 @@ class Field:
         if not isinstance(value, self.field_type):
             raise AttributeError("Field '{}' must be of " + str(self.field_type))
 
-        if self.value_check(value):
-            self.field = value
-        else:
-            raise AttributeError("Field '{}' is not valid")
+        self.value_check_and_assign(value)
 
-    def value_check(self, value):
-        return True
+    def value_check_and_assign(self, value):
+        self.field = value
 
     def valid(self):
         return bool(self.field)
@@ -97,64 +94,111 @@ class Field:
 
 class CharField(Field):
     def __init__(self, required, nullable):
-        Field.__init__(self, required, nullable, str)
+        super().__init__(required, nullable, str)
 
 
 class ArgumentsField(Field):
     def __init__(self, required, nullable):
-        Field.__init__(self, required, nullable, dict)
+        super().__init__(required, nullable, dict)
 
 
 class EmailField(CharField):
     def __init__(self, required, nullable):
-        CharField.__init__(self, required, nullable)
+        super().__init__(required, nullable)
 
-    def value_check(self, value):
-        return '@' in value
+    def value_check_and_assign(self, value):
+        if '@' in value:
+            self.field = value
+        else:
+            raise AttributeError("Field '{}' is not valid. '@' symbol not present in the analysed string")
 
 
 class PhoneField(CharField):
     def __init__(self, required, nullable):
-        CharField.__init__(self, required, nullable)
+        super().__init__(required, nullable)
 
     def __set__(self, instance, value):
         if value and isinstance(value, int):
             value = str(value)
 
-        CharField.__set__(self, instance, value)
+        super().__set__(instance, value)
 
-    def value_check(self, value):
-        return value.isdecimal() and len(value) == 11 and value.startswith('7')
+    def value_check_and_assign(self, value):
+        error_strings = []
+
+        if not value.isdecimal():
+            error_strings.append("Field '{0}' is not valid. Not a decimal value provided")
+
+        if len(value) != 11:
+            error_strings.append("Field '{0}' is not valid. Wrong phone number length")
+
+        if not value.startswith('7'):
+            error_strings.append("Field '{0}' is not valid. The phone number must begin with '7'")
+
+        if error_strings:
+            raise AttributeError('; '.join(error_strings))
+
+        self.field = value
 
 
 class DateField(CharField):
     def __init__(self, required, nullable):
-        CharField.__init__(self, required, nullable)
+        super().__init__(required, nullable)
 
-    def value_check(self, value):
+    @staticmethod
+    def date_check(value):
+        error_strings = []
         dmy = value.split('.')
-        return len(dmy) == 3 and len(value) == 10 and all(s.isdecimal() for s in dmy)
+
+        if not len(dmy) == 3:
+            error_strings.append("Field '{0}' is not valid. "
+                                 "Date format must have exactly 3 positions separated with '.'")
+
+        if not len(value) == 10:
+            error_strings.append("Field '{0}' is not valid. Date format length must be exactly 10 chars")
+
+        if any(not s.isdecimal() for s in dmy):
+            error_strings.append("Field '{0}' is not valid. Date positions must be decimal numbers")
+
+        return error_strings
+
+    def value_check_and_assign(self, value):
+        error_strings = self.date_check(value)
+
+        if error_strings:
+            raise AttributeError('; '.join(error_strings))
+
+        self.field = value
 
 
 class BirthDayField(DateField):
     def __init__(self, required, nullable):
-        DateField.__init__(self, required, nullable)
+        super().__init__(required, nullable)
 
-    def value_check(self, value):
-        if DateField.value_check(self, value):
+    def value_check_and_assign(self, value):
+        error_strings = self.date_check(value)
+        if not error_strings:
             b_day = datetime.date(*reversed([int(s) for s in value.split('.')]))
             delta = datetime.datetime.now().date() - b_day
-            return delta.days / 365 <= 70
 
-        return False
+            if delta.days / 365 > 70:
+                error_strings.append("Field '{0}' is not valid. The person's age is greater then 70 years")
+
+        if error_strings:
+            raise AttributeError('; '.join(error_strings))
+
+        self.field = value
 
 
 class GenderField(Field):
     def __init__(self, required, nullable):
-        Field.__init__(self, required, nullable, int)
+        super().__init__(required, nullable, int)
 
-    def value_check(self, value):
-        return 0 <= value <= 2
+    def value_check_and_assign(self, value):
+        if 0 <= value <= 2:
+            self.field = value
+        else:
+            raise AttributeError("Field '{}' is not valid. Gender id must be between 0 and 2")
 
     def valid(self):
         return self.field is not None
@@ -162,10 +206,19 @@ class GenderField(Field):
 
 class ClientIDsField(Field):
     def __init__(self, required):
-        Field.__init__(self, required, False, list)
+        super().__init__(required, False, list)
 
     def value_check(self, value):
         return all(isinstance(n, int) for n in value)
+
+    def value_check_and_assign(self, value):
+        error_strings = ["Field '{0}' is not valid. " + str(v) + " is not a valid integer"
+                         for v in value if not isinstance(v, int)]
+
+        if error_strings:
+            raise AttributeError('; '.join(error_strings))
+
+        self.field = value
 
 
 class Request:
@@ -180,16 +233,15 @@ class Request:
                 except AttributeError as e:
                     error_strings.append(str(e).format(f))
 
-            if not self.validate():
-                error_strings.append(name + " body validation failed")
-
             if error_strings:
                 raise AttributeError(', '.join(error_strings))
         else:
             raise AttributeError("Empty " + name.lower())
 
+        self.request_name = name
+
     def validate(self):
-        return True
+        pass
 
 
 class ClientsInterestsRequest(Request):
@@ -197,10 +249,13 @@ class ClientsInterestsRequest(Request):
     date = DateField(required=False, nullable=True)
 
     def __init__(self, arguments):
-        Request.__init__(self, arguments, 'Arguments')
+        super().__init__(arguments, 'Arguments')
 
-    def get_context(self):
-        return self.client_ids
+    def update_context(self, context):
+        context['nclients'] = len(self.client_ids)
+
+    def get_response(self, store, admin):
+        return dict(zip(self.client_ids, map(scoring.get_interests.__get__(store), self.client_ids)))
 
 
 class OnlineScoreRequest(Request):
@@ -212,16 +267,22 @@ class OnlineScoreRequest(Request):
     gender = GenderField(required=False, nullable=True)
 
     def __init__(self, arguments):
-        Request.__init__(self, arguments, 'Arguments')
+        super().__init__(arguments, 'Arguments')
 
     def validate(self):
-        return (self.first_name and self.last_name) or \
-                    (self.email and self.phone) or \
-                    (self.birthday and self.gender is not None)
+        if not ((self.first_name and self.last_name) or
+                (self.email and self.phone) or
+                (self.birthday and self.gender is not None)):
+            raise AttributeError(self.request_name + " body validation failed")
 
-    def get_context(self):
-        return {k: v.field for k, v in self.__class__.__dict__.items()
-                if not k.startswith('__') and not hasattr(v, '__call__') and v.valid()}
+    def get_score_arguments(self):
+        return {k: v.field for k, v in self.__class__.__dict__.items() if isinstance(v, Field) and v.valid()}
+
+    def update_context(self, context):
+        context['has'] = [k for k, v in self.__class__.__dict__.items() if isinstance(v, Field) and v.valid()]
+
+    def get_response(self, store, admin):
+        return {"score": 42 if admin else scoring.get_score(store, **self.get_score_arguments())}
 
 
 class MethodRequest(Request):
@@ -232,7 +293,7 @@ class MethodRequest(Request):
     method = CharField(required=True, nullable=False)
 
     def __init__(self, json_request):
-        Request.__init__(self, json_request, 'Request')
+        super().__init__(json_request, 'Request')
 
     @property
     def is_admin(self):
@@ -261,13 +322,17 @@ def method_handler(request, ctx, store):
         if not check_auth(method_request):
             raise PermissionError
 
-        context = methods[method_request.method](method_request.arguments).get_context()
-        if isinstance(context, dict):
-            ctx['has'] = context.keys()
-            response = {"score": 42 if check_auth(method_request) else scoring.get_score(store, **context)}
-        else:
-            ctx['nclients'] = len(context)
-            response = dict(zip(context, map(scoring.get_interests.__get__(store), context)))
+        method = methods[method_request.method](method_request.arguments)
+        method.validate()
+        method.update_context(ctx)
+        response = method.get_response(store, method_request.is_admin)
+        # context = method.get_context()
+        # if isinstance(context, dict):
+        #     ctx['has'] = context.keys()
+        #     response = {"score": 42 if method_request.is_admin else scoring.get_score(store, **context)}
+        # else:
+        #     ctx['nclients'] = len(context)
+        #     response = dict(zip(context, map(scoring.get_interests.__get__(store), context)))
 
     except AttributeError as e:
         response, code = {"error": str(e)}, INVALID_REQUEST
