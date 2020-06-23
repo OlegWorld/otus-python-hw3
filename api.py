@@ -57,11 +57,12 @@ def configure_logger(logger_file_name):
 
 
 class Field:
+    field = None
+
     def __init__(self, required, nullable, field_type):
         self.required = required
         self.nullable = nullable
         self.field_type = field_type
-        self.field = None
 
     def __get__(self, instance, owner):
         return self.field
