@@ -327,13 +327,6 @@ def method_handler(request, ctx, store):
         method.validate()
         method.update_context(ctx)
         response = method.get_response(store, method_request.is_admin)
-        # context = method.get_context()
-        # if isinstance(context, dict):
-        #     ctx['has'] = context.keys()
-        #     response = {"score": 42 if method_request.is_admin else scoring.get_score(store, **context)}
-        # else:
-        #     ctx['nclients'] = len(context)
-        #     response = dict(zip(context, map(scoring.get_interests.__get__(store), context)))
 
     except AttributeError as e:
         response, code = {"error": str(e)}, INVALID_REQUEST
