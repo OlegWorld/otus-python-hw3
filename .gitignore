@@ -1,0 +1,4 @@
+*.log
+*.pdf
+.pytest_cache
+.idea

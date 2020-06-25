@@ -10,6 +10,7 @@ import hashlib
 import uuid
 from abc import ABC
 from optparse import OptionParser
+from weakref import WeakKeyDictionary
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 import scoring
@@ -56,41 +57,65 @@ def configure_logger(logger_file_name):
     logging.basicConfig(**logger_config)
 
 
-class Field:
-    field = None
+class UnprovidedFieldError(AttributeError):
+    def __init__(self):
+        super().__init__(self, "Field '{0}' is required, but not provided")
 
+
+class NullableFieldError(AttributeError):
+    def __init__(self):
+        super().__init__(self, "Field '{0}' is not nullable")
+
+
+class FieldTypeError(TypeError):
+    def __init__(self, type):
+        super().__init__(self, "Field '{0}' must be of " + str(type))
+
+
+class InvalidFieldError(ValueError):
+    def __init__(self, text):
+        super().__init__(self, "Field '{0}' is not valid. " + text)
+
+
+class ValidationError(ValueError):
+    def __init__(self, text):
+        super().__init__(self, text + " arguments body validation failed")
+
+
+class Field:
     def __init__(self, required, nullable, field_type):
         self.required = required
         self.nullable = nullable
         self.field_type = field_type
+        self.field = WeakKeyDictionary()
 
     def __get__(self, instance, owner):
-        return self.field
+        return self.field.get(instance)
 
     def __set__(self, instance, value):
         if value is None:
             if not self.required:
-                self.field = None
+                self.field[instance] = None
                 return
             else:
-                raise AttributeError("Field '{}' is required, but not provided")
+                raise UnprovidedFieldError
 
         if not value:
             if self.nullable:
-                self.field = self.field_type()
+                self.field[instance] = self.field_type()
             else:
-                raise AttributeError("Field '{}' is not nullable")
+                raise NullableFieldError
 
         if not isinstance(value, self.field_type):
-            raise AttributeError("Field '{}' must be of " + str(self.field_type))
+            raise FieldTypeError(self.field_type)
 
-        self.value_check_and_assign(value)
+        self.value_check_and_assign(instance, value)
 
-    def value_check_and_assign(self, value):
-        self.field = value
+    def value_check_and_assign(self, instance, value):
+        self.field[instance] = value
 
-    def valid(self):
-        return bool(self.field)
+    def valid(self, instance):
+        return bool(self.field.get(instance))
 
 
 class CharField(Field):
@@ -107,11 +132,11 @@ class EmailField(CharField):
     def __init__(self, required, nullable):
         super().__init__(required, nullable)
 
-    def value_check_and_assign(self, value):
+    def value_check_and_assign(self, instance, value):
         if '@' in value:
-            self.field = value
+            self.field[instance] = value
         else:
-            raise AttributeError("Field '{}' is not valid. '@' symbol not present in the analysed string")
+            raise InvalidFieldError("'@' symbol not present in the analysed string")
 
 
 class PhoneField(CharField):
@@ -124,22 +149,22 @@ class PhoneField(CharField):
 
         super().__set__(instance, value)
 
-    def value_check_and_assign(self, value):
+    def value_check_and_assign(self, instance, value):
         error_strings = []
 
         if not value.isdecimal():
-            error_strings.append("Field '{0}' is not valid. Not a decimal value provided")
+            error_strings.append("Not a decimal value provided")
 
         if len(value) != 11:
-            error_strings.append("Field '{0}' is not valid. Wrong phone number length")
+            error_strings.append("Wrong phone number length")
 
         if not value.startswith('7'):
-            error_strings.append("Field '{0}' is not valid. The phone number must begin with '7'")
+            error_strings.append("The phone number must begin with '7'")
 
         if error_strings:
-            raise AttributeError('; '.join(error_strings))
+            raise InvalidFieldError('; '.join(error_strings))
 
-        self.field = value
+        self.field[instance] = value
 
 
 class DateField(CharField):
@@ -152,57 +177,56 @@ class DateField(CharField):
         dmy = value.split('.')
 
         if not len(dmy) == 3:
-            error_strings.append("Field '{0}' is not valid. "
-                                 "Date format must have exactly 3 positions separated with '.'")
+            error_strings.append("Date format must have exactly 3 positions separated with '.'")
 
         if not len(value) == 10:
-            error_strings.append("Field '{0}' is not valid. Date format length must be exactly 10 chars")
+            error_strings.append("Date format length must be exactly 10 chars")
 
         if any(not s.isdecimal() for s in dmy):
-            error_strings.append("Field '{0}' is not valid. Date positions must be decimal numbers")
+            error_strings.append("Date positions must be decimal numbers")
 
         return error_strings
 
-    def value_check_and_assign(self, value):
+    def value_check_and_assign(self, instance, value):
         error_strings = self.date_check(value)
 
         if error_strings:
-            raise AttributeError('; '.join(error_strings))
+            raise InvalidFieldError('; '.join(error_strings))
 
-        self.field = value
+        self.field[instance] = value
 
 
 class BirthDayField(DateField):
     def __init__(self, required, nullable):
         super().__init__(required, nullable)
 
-    def value_check_and_assign(self, value):
+    def value_check_and_assign(self, instance, value):
         error_strings = self.date_check(value)
         if not error_strings:
             b_day = datetime.date(*reversed([int(s) for s in value.split('.')]))
             delta = datetime.datetime.now().date() - b_day
 
             if delta.days / 365 > 70:
-                error_strings.append("Field '{0}' is not valid. The person's age is greater then 70 years")
+                error_strings.append("The person's age is greater then 70 years")
 
         if error_strings:
-            raise AttributeError('; '.join(error_strings))
+            raise InvalidFieldError('; '.join(error_strings))
 
-        self.field = value
+        self.field[instance] = value
 
 
 class GenderField(Field):
     def __init__(self, required, nullable):
         super().__init__(required, nullable, int)
 
-    def value_check_and_assign(self, value):
+    def value_check_and_assign(self, instance, value):
         if 0 <= value <= 2:
-            self.field = value
+            self.field[instance] = value
         else:
-            raise AttributeError("Field '{}' is not valid. Gender id must be between 0 and 2")
+            raise InvalidFieldError("Gender id must be between 0 and 2")
 
-    def valid(self):
-        return self.field is not None
+    def valid(self, instance):
+        return self.field.get(instance) is not None
 
 
 class ClientIDsField(Field):
@@ -212,34 +236,36 @@ class ClientIDsField(Field):
     def value_check(self, value):
         return all(isinstance(n, int) for n in value)
 
-    def value_check_and_assign(self, value):
-        error_strings = ["Field '{0}' is not valid. " + str(v) + " is not a valid integer"
-                         for v in value if not isinstance(v, int)]
+    def value_check_and_assign(self, instance, value):
+        error_strings = [str(v) + " is not a valid integer" for v in value if not isinstance(v, int)]
 
         if error_strings:
-            raise AttributeError('; '.join(error_strings))
+            raise InvalidFieldError('; '.join(error_strings))
 
-        self.field = value
+        self.field[instance] = value
 
 
 class Request:
-    def __init__(self, arguments, name):
+    def __init__(self, arguments):
         if arguments:
             error_strings = []
-            field_names = [k for k, v in self.__class__.__dict__.items() if isinstance(v, Field)]
+            field_names = [k for k, v in self.generate_dict_field_items()]
 
             for f in field_names:
                 try:
                     setattr(self, f, arguments.get(f))
-                except AttributeError as e:
+                except Exception as e:
                     error_strings.append(str(e).format(f))
 
             if error_strings:
                 raise AttributeError(', '.join(error_strings))
         else:
-            raise AttributeError("Empty " + name.lower())
+            raise AttributeError("Empty " + self.__class__.__name__ + " arguments")
 
-        self.request_name = name
+    def generate_dict_field_items(self):
+        for k, v in self.__class__.__dict__.items():
+            if isinstance(v, Field):
+                yield k, v
 
     def validate(self):
         pass
@@ -250,7 +276,7 @@ class ClientsInterestsRequest(Request):
     date = DateField(required=False, nullable=True)
 
     def __init__(self, arguments):
-        super().__init__(arguments, 'Arguments')
+        super().__init__(arguments)
 
     def update_context(self, context):
         context['nclients'] = len(self.client_ids)
@@ -268,19 +294,19 @@ class OnlineScoreRequest(Request):
     gender = GenderField(required=False, nullable=True)
 
     def __init__(self, arguments):
-        super().__init__(arguments, 'Arguments')
+        super().__init__(arguments)
 
     def validate(self):
         if not ((self.first_name and self.last_name) or
                 (self.email and self.phone) or
                 (self.birthday and self.gender is not None)):
-            raise AttributeError(self.request_name + " body validation failed")
+            raise ValidationError(self.__class__.__name__)
 
     def get_score_arguments(self):
-        return {k: v.field for k, v in self.__class__.__dict__.items() if isinstance(v, Field) and v.valid()}
+        return {k: v.field for k, v in self.generate_dict_field_items() if v.valid(self)}
 
     def update_context(self, context):
-        context['has'] = [k for k, v in self.__class__.__dict__.items() if isinstance(v, Field) and v.valid()]
+        context['has'] = self.get_score_arguments().keys()
 
     def get_response(self, store, admin):
         return {"score": 42 if admin else scoring.get_score(store, **self.get_score_arguments())}
@@ -294,7 +320,7 @@ class MethodRequest(Request):
     method = CharField(required=True, nullable=False)
 
     def __init__(self, json_request):
-        super().__init__(json_request, 'Request')
+        super().__init__(json_request)
 
     @property
     def is_admin(self):
@@ -311,8 +337,6 @@ def check_auth(request):
 
 
 def method_handler(request, ctx, store):
-    response, code = None, OK
-
     methods = {
         'online_score': OnlineScoreRequest,
         'clients_interests': ClientsInterestsRequest
@@ -321,19 +345,17 @@ def method_handler(request, ctx, store):
     try:
         method_request = MethodRequest(request.get('body'))
         if not check_auth(method_request):
-            raise PermissionError
+            return {"error": "Forbidden"}, FORBIDDEN
 
         method = methods[method_request.method](method_request.arguments)
         method.validate()
         method.update_context(ctx)
         response = method.get_response(store, method_request.is_admin)
 
-    except AttributeError as e:
-        response, code = {"error": str(e)}, INVALID_REQUEST
-    except PermissionError:
-        response, code = {"error": "Forbidden"}, FORBIDDEN
+    except Exception as e:
+        return {"error": str(e)}, INVALID_REQUEST
 
-    return response, code
+    return response, OK
 
 
 class MainHTTPHandler(BaseHTTPRequestHandler):
