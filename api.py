@@ -14,6 +14,7 @@ from weakref import WeakKeyDictionary
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 import scoring
+import store
 
 SALT = "Otus"
 ADMIN_LOGIN = "admin"
@@ -57,29 +58,34 @@ def configure_logger(logger_file_name):
     logging.basicConfig(**logger_config)
 
 
-class UnprovidedFieldError(AttributeError):
+class ApiException(Exception):
+    def __init__(self, what):
+        self.what = what
+
+
+class UnprovidedFieldError(ApiException):
     def __init__(self):
-        super().__init__(self, "Field '{0}' is required, but not provided")
+        ApiException.__init__(self, "Field '{0}' is required, but not provided")
 
 
-class NullableFieldError(AttributeError):
+class NullableFieldError(ApiException):
     def __init__(self):
-        super().__init__(self, "Field '{0}' is not nullable")
+        ApiException.__init__(self, "Field '{0}' is not nullable")
 
 
-class FieldTypeError(TypeError):
+class FieldTypeError(ApiException):
     def __init__(self, type):
-        super().__init__(self, "Field '{0}' must be of " + str(type))
+        ApiException.__init__(self, "Field '{0}' must be of " + str(type))
 
 
-class InvalidFieldError(ValueError):
+class InvalidFieldError(ApiException):
     def __init__(self, text):
-        super().__init__(self, "Field '{0}' is not valid. " + text)
+        ApiException.__init__(self, "Field '{0}' is not valid. " + text)
 
 
-class ValidationError(ValueError):
+class ValidationError(ApiException):
     def __init__(self, text):
-        super().__init__(self, text + " arguments body validation failed")
+        ApiException.__init__(self, text + " arguments body validation failed")
 
 
 class Field:
@@ -254,8 +260,8 @@ class Request:
             for f in field_names:
                 try:
                     setattr(self, f, arguments.get(f))
-                except Exception as e:
-                    error_strings.append(str(e).format(f))
+                except ApiException as e:
+                    error_strings.append(e.what.format(f))
 
             if error_strings:
                 raise AttributeError(', '.join(error_strings))
@@ -281,8 +287,8 @@ class ClientsInterestsRequest(Request):
     def update_context(self, context):
         context['nclients'] = len(self.client_ids)
 
-    def get_response(self, store, admin):
-        return dict(zip(self.client_ids, map(scoring.get_interests.__get__(store), self.client_ids)))
+    def get_response(self, storage, admin):
+        return dict(zip(self.client_ids, map(scoring.get_interests.__get__(storage), self.client_ids)))
 
 
 class OnlineScoreRequest(Request):
@@ -303,13 +309,13 @@ class OnlineScoreRequest(Request):
             raise ValidationError(self.__class__.__name__)
 
     def get_score_arguments(self):
-        return {k: v.field for k, v in self.generate_dict_field_items() if v.valid(self)}
+        return {k: v.field[self] for k, v in self.generate_dict_field_items() if v.valid(self)}
 
     def update_context(self, context):
         context['has'] = self.get_score_arguments().keys()
 
-    def get_response(self, store, admin):
-        return {"score": 42 if admin else scoring.get_score(store, **self.get_score_arguments())}
+    def get_response(self, storage, admin):
+        return {"score": 42 if admin else scoring.get_score(storage, **self.get_score_arguments())}
 
 
 class MethodRequest(Request):
@@ -336,7 +342,7 @@ def check_auth(request):
     return hashlib.sha512(msg.encode()).hexdigest() == request.token
 
 
-def method_handler(request, ctx, store):
+def method_handler(request, ctx, storage):
     methods = {
         'online_score': OnlineScoreRequest,
         'clients_interests': ClientsInterestsRequest
@@ -350,8 +356,10 @@ def method_handler(request, ctx, store):
         method = methods[method_request.method](method_request.arguments)
         method.validate()
         method.update_context(ctx)
-        response = method.get_response(store, method_request.is_admin)
+        response = method.get_response(storage, method_request.is_admin)
 
+    except ValidationError as e:
+        return {"error": e.what}, INVALID_REQUEST
     except Exception as e:
         return {"error": str(e)}, INVALID_REQUEST
 
@@ -362,7 +370,7 @@ class MainHTTPHandler(BaseHTTPRequestHandler):
     router = {
         "method": method_handler
     }
-    store = None
+    store = store.Store(max_attempts=10)
 
     def get_request_id(self, headers):
         return headers.get('HTTP_X_REQUEST_ID', uuid.uuid4().hex)

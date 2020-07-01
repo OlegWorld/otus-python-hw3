@@ -4,6 +4,7 @@ import functools
 import unittest
 
 import api
+import store
 
 
 def cases(cases):
@@ -21,7 +22,7 @@ class TestSuite(unittest.TestCase):
     def setUp(self):
         self.context = {}
         self.headers = {}
-        self.settings = {}
+        self.settings = store.Store(max_attempts=10)
 
     def get_response(self, request):
         return api.method_handler({"body": request, "headers": self.headers}, self.context, self.settings)
