@@ -14,6 +14,7 @@ from weakref import WeakKeyDictionary
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 import scoring
+import store
 
 SALT = "Otus"
 ADMIN_LOGIN = "admin"
@@ -226,8 +227,8 @@ class ClientsInterestsRequest(Request):
     def update_context(self, context):
         context['nclients'] = len(self.client_ids)
 
-    def get_response(self, store, admin):
-        return dict(zip(self.client_ids, map(scoring.get_interests.__get__(store), self.client_ids)))
+    def get_response(self, storage, admin):
+        return dict(zip(self.client_ids, map(scoring.get_interests.__get__(storage), self.client_ids)))
 
 
 class OnlineScoreRequest(Request):
@@ -245,13 +246,13 @@ class OnlineScoreRequest(Request):
             raise ValidationError(self.__class__.__name__)
 
     def get_score_arguments(self):
-        return {k: v.field for k, v in self.generate_dict_field_items() if v.valid(self)}
+        return {k: v.field[self] for k, v in self.generate_dict_field_items() if v.valid(self)}
 
     def update_context(self, context):
         context['has'] = self.get_score_arguments().keys()
 
-    def get_response(self, store, admin):
-        return {"score": 42 if admin else scoring.get_score(store, **self.get_score_arguments())}
+    def get_response(self, storage, admin):
+        return {"score": 42 if admin else scoring.get_score(storage, **self.get_score_arguments())}
 
 
 class MethodRequest(Request):
@@ -275,7 +276,7 @@ def check_auth(request):
     return hashlib.sha512(msg.encode()).hexdigest() == request.token
 
 
-def method_handler(request, ctx, store):
+def method_handler(request, ctx, storage):
     methods = {
         'online_score': OnlineScoreRequest,
         'clients_interests': ClientsInterestsRequest
@@ -289,7 +290,7 @@ def method_handler(request, ctx, store):
         method = methods[method_request.method](method_request.arguments)
         method.validate()
         method.update_context(ctx)
-        response = method.get_response(store, method_request.is_admin)
+        response = method.get_response(storage, method_request.is_admin)
 
     except ValidationError as e:
         return {"error": e.text}, INVALID_REQUEST
@@ -301,7 +302,7 @@ class MainHTTPHandler(BaseHTTPRequestHandler):
     router = {
         "method": method_handler
     }
-    store = None
+    store = store.Store(max_attempts=10)
 
     def get_request_id(self, headers):
         return headers.get('HTTP_X_REQUEST_ID', uuid.uuid4().hex)
