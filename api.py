@@ -57,29 +57,9 @@ def configure_logger(logger_file_name):
     logging.basicConfig(**logger_config)
 
 
-class UnprovidedFieldError(AttributeError):
-    def __init__(self):
-        super().__init__(self, "Field '{0}' is required, but not provided")
-
-
-class NullableFieldError(AttributeError):
-    def __init__(self):
-        super().__init__(self, "Field '{0}' is not nullable")
-
-
-class FieldTypeError(TypeError):
-    def __init__(self, type):
-        super().__init__(self, "Field '{0}' must be of " + str(type))
-
-
-class InvalidFieldError(ValueError):
-    def __init__(self, text):
-        super().__init__(self, "Field '{0}' is not valid. " + text)
-
-
 class ValidationError(ValueError):
     def __init__(self, text):
-        super().__init__(self, text + " arguments body validation failed")
+        self.text = text
 
 
 class Field:
@@ -98,21 +78,22 @@ class Field:
                 self.field[instance] = None
                 return
             else:
-                raise UnprovidedFieldError
+                raise ValidationError("Field '{0}' is required, but not provided")
 
         if not value:
             if self.nullable:
                 self.field[instance] = self.field_type()
             else:
-                raise NullableFieldError
+                raise ValidationError("Field '{0}' is not nullable")
 
         if not isinstance(value, self.field_type):
-            raise FieldTypeError(self.field_type)
+            raise ValidationError("Field '{0}' must be of " + str(self.field_type))
 
-        self.value_check_and_assign(instance, value)
+        if self.value_check(value):
+            self.field[instance] = value
 
-    def value_check_and_assign(self, instance, value):
-        self.field[instance] = value
+    def value_check(self, value):
+        return True
 
     def valid(self, instance):
         return bool(self.field.get(instance))
@@ -129,27 +110,21 @@ class ArgumentsField(Field):
 
 
 class EmailField(CharField):
-    def __init__(self, required, nullable):
-        super().__init__(required, nullable)
+    def value_check(self, value):
+        if '@' not in value:
+            raise ValidationError("Field '{0}' is not valid. '@' symbol not present in the analysed string")
 
-    def value_check_and_assign(self, instance, value):
-        if '@' in value:
-            self.field[instance] = value
-        else:
-            raise InvalidFieldError("'@' symbol not present in the analysed string")
+        return True
 
 
 class PhoneField(CharField):
-    def __init__(self, required, nullable):
-        super().__init__(required, nullable)
-
     def __set__(self, instance, value):
         if value and isinstance(value, int):
             value = str(value)
 
         super().__set__(instance, value)
 
-    def value_check_and_assign(self, instance, value):
+    def value_check(self, value):
         error_strings = []
 
         if not value.isdecimal():
@@ -162,68 +137,44 @@ class PhoneField(CharField):
             error_strings.append("The phone number must begin with '7'")
 
         if error_strings:
-            raise InvalidFieldError('; '.join(error_strings))
+            raise ValidationError("Field '{0}' is not valid. " + '; '.join(error_strings))
 
-        self.field[instance] = value
+        return True
 
 
-class DateField(CharField):
+class DateField(Field):
     def __init__(self, required, nullable):
-        super().__init__(required, nullable)
+        super().__init__(required, nullable, datetime.date)
 
-    @staticmethod
-    def date_check(value):
-        error_strings = []
-        dmy = value.split('.')
+    def __set__(self, instance, value):
+        if isinstance(value, str):
+            try:
+                value = datetime.datetime.strptime(value, "%d.%m.%Y").date()
+            except ValueError as e:
+                raise ValidationError("Field '{0}' is not valid. '" + value + "' is not a date of dd.mm.yyyy format")
 
-        if not len(dmy) == 3:
-            error_strings.append("Date format must have exactly 3 positions separated with '.'")
-
-        if not len(value) == 10:
-            error_strings.append("Date format length must be exactly 10 chars")
-
-        if any(not s.isdecimal() for s in dmy):
-            error_strings.append("Date positions must be decimal numbers")
-
-        return error_strings
-
-    def value_check_and_assign(self, instance, value):
-        error_strings = self.date_check(value)
-
-        if error_strings:
-            raise InvalidFieldError('; '.join(error_strings))
-
-        self.field[instance] = value
+        super().__set__(instance, value)
 
 
 class BirthDayField(DateField):
-    def __init__(self, required, nullable):
-        super().__init__(required, nullable)
+    def value_check(self, value):
+        delta = datetime.datetime.now().date() - value
 
-    def value_check_and_assign(self, instance, value):
-        error_strings = self.date_check(value)
-        if not error_strings:
-            b_day = datetime.date(*reversed([int(s) for s in value.split('.')]))
-            delta = datetime.datetime.now().date() - b_day
+        if delta.days / 365 > 70:
+            raise ValidationError("Field '{0}' is not valid. The person's age is greater then 70 years")
 
-            if delta.days / 365 > 70:
-                error_strings.append("The person's age is greater then 70 years")
-
-        if error_strings:
-            raise InvalidFieldError('; '.join(error_strings))
-
-        self.field[instance] = value
+        return True
 
 
 class GenderField(Field):
     def __init__(self, required, nullable):
         super().__init__(required, nullable, int)
 
-    def value_check_and_assign(self, instance, value):
+    def value_check(self, value):
         if 0 <= value <= 2:
-            self.field[instance] = value
+            return True
         else:
-            raise InvalidFieldError("Gender id must be between 0 and 2")
+            raise ValidationError("Field '{0}' is not valid. Gender id must be between 0 and 2")
 
     def valid(self, instance):
         return self.field.get(instance) is not None
@@ -236,13 +187,13 @@ class ClientIDsField(Field):
     def value_check(self, value):
         return all(isinstance(n, int) for n in value)
 
-    def value_check_and_assign(self, instance, value):
+    def value_check(self, value):
         error_strings = [str(v) + " is not a valid integer" for v in value if not isinstance(v, int)]
 
         if error_strings:
-            raise InvalidFieldError('; '.join(error_strings))
+            raise ValidationError("Field '{0}' is not valid." + '; '.join(error_strings))
 
-        self.field[instance] = value
+        return True
 
 
 class Request:
@@ -254,13 +205,13 @@ class Request:
             for f in field_names:
                 try:
                     setattr(self, f, arguments.get(f))
-                except Exception as e:
-                    error_strings.append(str(e).format(f))
+                except ValidationError as e:
+                    error_strings.append(e.text.format(f))
 
             if error_strings:
-                raise AttributeError(', '.join(error_strings))
+                raise ValidationError(', '.join(error_strings))
         else:
-            raise AttributeError("Empty " + self.__class__.__name__ + " arguments")
+            raise ValidationError("Empty " + self.__class__.__name__ + " arguments")
 
     def generate_dict_field_items(self):
         for k, v in self.__class__.__dict__.items():
@@ -274,9 +225,6 @@ class Request:
 class ClientsInterestsRequest(Request):
     client_ids = ClientIDsField(required=True)
     date = DateField(required=False, nullable=True)
-
-    def __init__(self, arguments):
-        super().__init__(arguments)
 
     def update_context(self, context):
         context['nclients'] = len(self.client_ids)
@@ -292,9 +240,6 @@ class OnlineScoreRequest(Request):
     phone = PhoneField(required=False, nullable=True)
     birthday = BirthDayField(required=False, nullable=True)
     gender = GenderField(required=False, nullable=True)
-
-    def __init__(self, arguments):
-        super().__init__(arguments)
 
     def validate(self):
         if not ((self.first_name and self.last_name) or
@@ -318,9 +263,6 @@ class MethodRequest(Request):
     token = CharField(required=True, nullable=True)
     arguments = ArgumentsField(required=True, nullable=True)
     method = CharField(required=True, nullable=False)
-
-    def __init__(self, json_request):
-        super().__init__(json_request)
 
     @property
     def is_admin(self):
@@ -352,8 +294,8 @@ def method_handler(request, ctx, store):
         method.update_context(ctx)
         response = method.get_response(store, method_request.is_admin)
 
-    except Exception as e:
-        return {"error": str(e)}, INVALID_REQUEST
+    except ValidationError as e:
+        return {"error": e.text}, INVALID_REQUEST
 
     return response, OK
 
