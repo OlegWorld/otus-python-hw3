@@ -28,6 +28,11 @@ def instance(request):
     return TestInstanceObject()
 
 
+@pytest.fixture
+def storage(request):
+    return store.Store(None, max_attempts=10, max_timeout=1)
+
+
 @pytest.fixture(params=[int, str, dict, list])
 def case_type(request):
     yield request.param
@@ -191,8 +196,8 @@ def test_gender_field_set_ok(case_value, instance):
     assert f.__get__(instance, None) == case_value
 
 
-def test_empty_request():
-    result, code = api.method_handler({"body": {}, "headers": {}}, {}, store.Store(max_attempts=10))
+def test_empty_request(storage):
+    result, code = api.method_handler({"body": {}, "headers": {}}, {}, storage)
     assert 'error' in result
     assert result['error'] == 'Empty MethodRequest arguments'
     assert code == api.INVALID_REQUEST
@@ -203,8 +208,8 @@ def test_empty_request():
         {"account": "horns&hoofs", "login": "h&f", "method": "online_score", "token": "sdd", "arguments": {}},
         {"account": "horns&hoofs", "login": "admin", "method": "online_score", "token": "", "arguments": {}}
     ], ids=['no token', 'bad token', 'admin & no token'])
-def test_bad_auth(body_value):
-    result, code = api.method_handler({"body": body_value, "headers": {}}, {}, store.Store(max_attempts=10))
+def test_bad_auth(body_value, storage):
+    result, code = api.method_handler({"body": body_value, "headers": {}}, {}, storage)
     assert code == api.FORBIDDEN
     assert 'error' in result
     assert result['error'] == 'Forbidden'
@@ -215,17 +220,17 @@ def test_bad_auth(body_value):
     {"account": "horns&hoofs", "login": "h&f", "arguments": {}},
     {"account": "horns&hoofs", "method": "online_score", "arguments": {}}
     ], ids=['no arguments & token', 'no method & token', 'no login & token'])
-def test_invalid_method_request(body_value):
-    result, code = api.method_handler({"body": body_value, "headers": {}}, {}, store.Store(max_attempts=10))
+def test_invalid_method_request(body_value, storage):
+    result, code = api.method_handler({"body": body_value, "headers": {}}, {}, storage)
     assert code == api.INVALID_REQUEST
     assert 'error' in result
     assert re.search(r"Field '[a-z_]*' is required, but not provided", result['error'])
 
 
 @pytest.mark.parametrize('arguments_value', [{}])
-def test_empty_score_request(arguments_value, valid_score_request):
+def test_empty_score_request(arguments_value, valid_score_request, storage):
     valid_score_request['arguments'] = arguments_value
-    result, code = api.method_handler({"body": valid_score_request, "headers": {}}, {}, store.Store(max_attempts=10))
+    result, code = api.method_handler({"body": valid_score_request, "headers": {}}, {}, storage)
     assert code == api.INVALID_REQUEST
     assert 'error' in result
     assert result['error'] == 'Empty OnlineScoreRequest arguments'
@@ -236,9 +241,9 @@ def test_empty_score_request(arguments_value, valid_score_request):
     {"phone": "79175002040", "birthday": "01.01.2000", "first_name": "s"},
     {"email": "stupnikov@otus.ru", "gender": 1, "last_name": 's'}
 ])
-def test_invalid_score_request(arguments_value, valid_score_request):
+def test_invalid_score_request(arguments_value, valid_score_request, storage):
     valid_score_request['arguments'] = arguments_value
-    result, code = api.method_handler({"body": valid_score_request, "headers": {}}, {}, store.Store(max_attempts=10))
+    result, code = api.method_handler({"body": valid_score_request, "headers": {}}, {}, storage)
     assert code == api.INVALID_REQUEST
     assert 'error' in result
     assert result['error'] == 'OnlineScoreRequest arguments body validation failed'
@@ -251,9 +256,9 @@ def test_invalid_score_request(arguments_value, valid_score_request):
     {"phone": "79175002040", "email": "stupnikov@otus.ru", "gender": 1, "birthday": "01.01.1890"},
     {"phone": "79175002040", "email": "stupnikov@otus.ru", "gender": 1, "birthday": "XXX"}
 ])
-def test_error_score_request(arguments_value, valid_score_request):
+def test_error_score_request(arguments_value, valid_score_request, storage):
     valid_score_request['arguments'] = arguments_value
-    result, code = api.method_handler({"body": valid_score_request, "headers": {}}, {}, store.Store(max_attempts=10))
+    result, code = api.method_handler({"body": valid_score_request, "headers": {}}, {}, storage)
     assert code == api.INVALID_REQUEST
     assert 'error' in result
     assert re.search(r"Field '[a-z_]*' is not valid", result['error'])
@@ -265,9 +270,9 @@ def test_error_score_request(arguments_value, valid_score_request):
     {"phone": "79175002040", "email": "stupnikov@otus.ru", "gender": 1, "birthday": "01.01.2000",
      "first_name": "s", "last_name": 2}
 ])
-def test_error_type_score_request(arguments_value, valid_score_request):
+def test_error_type_score_request(arguments_value, valid_score_request, storage):
     valid_score_request['arguments'] = arguments_value
-    result, code = api.method_handler({"body": valid_score_request, "headers": {}}, {}, store.Store(max_attempts=10))
+    result, code = api.method_handler({"body": valid_score_request, "headers": {}}, {}, storage)
     assert code == api.INVALID_REQUEST
     assert 'error' in result
     assert re.search(r"Field '[a-z_]*' must be of ", result['error'])
@@ -283,21 +288,19 @@ def test_error_type_score_request(arguments_value, valid_score_request):
     {"phone": "79175002040", "email": "stupnikov@otus.ru", "gender": 1, "birthday": "01.01.2000",
      "first_name": "a", "last_name": "b"}
 ])
-def test_ok_score_request(arguments_value, valid_score_request):
+def test_ok_score_request(arguments_value, valid_score_request, storage):
     valid_score_request['arguments'] = arguments_value
-    st = store.Store(max_attempts=10)
-    result, code = api.method_handler({"body": valid_score_request, "headers": {}}, {}, st)
+    result, code = api.method_handler({"body": valid_score_request, "headers": {}}, {}, storage)
     assert code == api.OK
     assert 'error' not in result
     assert 'score' in result
 
 
-def test_ok_score_admin_request():
+def test_ok_score_admin_request(storage):
     arguments = {"phone": "79175002040", "email": "stupnikov@otus.ru"}
     request = {"account": "horns&hoofs", "login": "admin", "method": "online_score", "arguments": arguments}
     set_valid_auth(request)
-    st = store.Store(max_attempts=10)
-    result, code = api.method_handler({"body": request, "headers": {}}, {}, st)
+    result, code = api.method_handler({"body": request, "headers": {}}, {}, storage)
     assert code == api.OK
     assert 'score' in result
     assert result['score'] == 42
@@ -311,9 +314,8 @@ def test_ok_score_admin_request():
     {"client_ids": ["1", "2"], "date": "20.07.2017"},
     {"client_ids": [1, 2], "date": "XXX"}
 ])
-def test_invalid_interests_request(arguments_value, valid_interests_request):
+def test_invalid_interests_request(arguments_value, valid_interests_request, storage):
     valid_interests_request['arguments'] = arguments_value
-    st = store.Store(max_attempts=10)
-    result, code = api.method_handler({"body": valid_interests_request, "headers": {}}, {}, st)
+    result, code = api.method_handler({"body": valid_interests_request, "headers": {}}, {}, storage)
     assert code == api.INVALID_REQUEST
     assert 'error' in result
