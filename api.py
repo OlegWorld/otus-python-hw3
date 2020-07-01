@@ -185,9 +185,6 @@ class ClientIDsField(Field):
         super().__init__(required, False, list)
 
     def value_check(self, value):
-        return all(isinstance(n, int) for n in value)
-
-    def value_check(self, value):
         error_strings = [str(v) + " is not a valid integer" for v in value if not isinstance(v, int)]
 
         if error_strings:
