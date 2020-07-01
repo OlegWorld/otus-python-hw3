@@ -243,7 +243,7 @@ class OnlineScoreRequest(Request):
         if not ((self.first_name and self.last_name) or
                 (self.email and self.phone) or
                 (self.birthday and self.gender is not None)):
-            raise ValidationError(self.__class__.__name__)
+            raise ValidationError(self.__class__.__name__ + ' arguments body validation failed')
 
     def get_score_arguments(self):
         return {k: v.field[self] for k, v in self.generate_dict_field_items() if v.valid(self)}

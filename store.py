@@ -40,7 +40,7 @@ class Store:
         self.__timeout = max_timeout
         self.__thread_pool = ThreadPoolExecutor(max_workers=max_workers)
         self.__event_loop = asyncio.get_event_loop()
-        self.__event_loop.run_in_executor(self.__thread_pool)
+        # self.__event_loop.run_in_executor(self.__thread_pool)
 
     def stop(self):
         self.__event_loop.stop()

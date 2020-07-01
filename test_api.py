@@ -57,7 +57,7 @@ def test_field_construction(case_required, case_nullable, case_type):
 @pytest.mark.parametrize('case_nullable', tf_list, ids=['(nullable={})'.format(tf) for tf in tf_list])
 def test_field_set_none_required(case_nullable, case_type, instance):
     f = api.Field(True, case_nullable, case_type)
-    with pytest.raises(api.UnprovidedFieldError):
+    with pytest.raises(api.ValidationError):
         f.__set__(instance, None)
 
 
@@ -80,7 +80,7 @@ def test_field_set_nullable(case_required, case_type, instance):
 @pytest.mark.parametrize('case_required', tf_list, ids=['(required={})'.format(tf) for tf in tf_list])
 def test_field_set_non_nullable(case_required, case_type, instance):
     f = api.Field(case_required, False, case_type)
-    with pytest.raises(api.NullableFieldError):
+    with pytest.raises(api.ValidationError):
         f.__set__(instance, case_type())
 
 
@@ -88,7 +88,7 @@ def test_field_set_non_nullable(case_required, case_type, instance):
 def test_field_set_wrong_type(case_type, case_value, instance):
     f = api.Field(True, False, case_type)
     if not isinstance(case_value, case_type):
-        with pytest.raises(api.FieldTypeError, match=str(case_type)):
+        with pytest.raises(api.ValidationError, match=str(case_type)):
             f.__set__(instance, case_value)
 
 
@@ -103,28 +103,28 @@ def test_field_get(case_type, case_value, instance):
 @pytest.mark.parametrize('case_value', [-4, [1, 2, 3], {'a': 1, 'b': 2}, int, str, True, (1,)])
 def test_char_field_set_wrong(case_value, instance):
     f = api.CharField(True, False)
-    with pytest.raises(api.FieldTypeError, match=str(str)):
+    with pytest.raises(api.ValidationError, match=str(str)):
         f.__set__(instance, case_value)
 
 
 @pytest.mark.parametrize('case_value', ['abc', -4, [1, 2, 3], int, str, True, (1,)])
 def test_arguments_field_set_wrong(case_value, instance):
     f = api.ArgumentsField(True, False)
-    with pytest.raises(api.FieldTypeError, match=str(dict)):
+    with pytest.raises(api.ValidationError, match=str(dict)):
         f.__set__(instance, case_value)
 
 
 @pytest.mark.parametrize('case_value', [-4, [1, 2, 3], {'a': 1, 'b': 2}, int, str, True, (1,)])
 def test_email_field_set_non_str(case_value, instance):
     f = api.EmailField(True, False)
-    with pytest.raises(api.FieldTypeError, match=str(str)):
+    with pytest.raises(api.ValidationError, match=str(str)):
         f.__set__(instance, case_value)
 
 
 @pytest.mark.parametrize('case_value', ['abc', '123', 'spam'])
 def test_email_field_set_wrong_text(case_value, instance):
     f = api.EmailField(True, False)
-    with pytest.raises(api.InvalidFieldError, match='@'):
+    with pytest.raises(api.ValidationError, match='@'):
         f.__set__(instance, case_value)
 
 
@@ -138,7 +138,7 @@ def test_email_field_set_ok(case_value, instance):
 @pytest.mark.parametrize('case_value', ['abc', '123', '12345678901', '7890', 712345678907, '7123456789012345'])
 def test_phone_field_set_wrong_text(case_value, instance):
     f = api.PhoneField(True, False)
-    with pytest.raises(api.InvalidFieldError):
+    with pytest.raises(api.ValidationError):
         f.__set__(instance, case_value)
 
 
@@ -149,10 +149,10 @@ def test_phone_field_set_ok(case_value, instance):
     assert f.__get__(instance, None) == str(case_value)
 
 
-@pytest.mark.parametrize('case_value', ['abc', 'ab.cdefghi', '01.02.123c', '01.0234567', '01.02.03.04', '1.02.1234'])
+@pytest.mark.parametrize('case_value', ['abc', 'ab.cdefghi', '01.02.123c', '01.0234567', '01.02.03.04'])
 def test_date_field_set_wrong(case_value, instance):
     f = api.DateField(True, False)
-    with pytest.raises(api.InvalidFieldError):
+    with pytest.raises(api.ValidationError):
         f.__set__(instance, case_value)
 
 
@@ -160,13 +160,13 @@ def test_date_field_set_wrong(case_value, instance):
 def test_date_field_set_ok(case_value, instance):
     f = api.DateField(True, False)
     f.__set__(instance, case_value)
-    assert f.__get__(instance, None) == case_value
+    assert f.__get__(instance, None).strftime('%d.%m.%Y') == case_value
 
 
 @pytest.mark.parametrize('case_value', ['01.02.1234', '23.07.1467'])
 def test_birthday_field_set_wrong(case_value, instance):
     f = api.BirthDayField(True, False)
-    with pytest.raises(api.InvalidFieldError):
+    with pytest.raises(api.ValidationError):
         f.__set__(instance, case_value)
 
 
@@ -174,13 +174,13 @@ def test_birthday_field_set_wrong(case_value, instance):
 def test_birthday_field_set_ok(case_value, instance):
     f = api.BirthDayField(True, False)
     f.__set__(instance, case_value)
-    assert f.__get__(instance, None) == case_value
+    assert f.__get__(instance, None).strftime('%d.%m.%Y') == case_value
 
 
 @pytest.mark.parametrize('case_value', [-1, 3, 1234])
 def test_gender_field_set_wrong(case_value, instance):
     f = api.GenderField(True, True)
-    with pytest.raises(api.InvalidFieldError):
+    with pytest.raises(api.ValidationError):
         f.__set__(instance, case_value)
 
 
