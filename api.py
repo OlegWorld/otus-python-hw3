@@ -63,10 +63,11 @@ class ValidationError(ValueError):
 
 
 class Field:
-    def __init__(self, required, nullable, field_type):
+    field_type = None
+
+    def __init__(self, required, nullable):
         self.required = required
         self.nullable = nullable
-        self.field_type = field_type
         self.field = WeakKeyDictionary()
 
     def __get__(self, instance, owner):
@@ -100,13 +101,11 @@ class Field:
 
 
 class CharField(Field):
-    def __init__(self, required, nullable):
-        super().__init__(required, nullable, str)
+    field_type = str
 
 
 class ArgumentsField(Field):
-    def __init__(self, required, nullable):
-        super().__init__(required, nullable, dict)
+    field_type = dict
 
 
 class EmailField(CharField):
@@ -143,8 +142,7 @@ class PhoneField(CharField):
 
 
 class DateField(Field):
-    def __init__(self, required, nullable):
-        super().__init__(required, nullable, datetime.date)
+    field_type = datetime.date
 
     def __set__(self, instance, value):
         if isinstance(value, str):
@@ -167,8 +165,7 @@ class BirthDayField(DateField):
 
 
 class GenderField(Field):
-    def __init__(self, required, nullable):
-        super().__init__(required, nullable, int)
+    field_type = int
 
     def value_check(self, value):
         if 0 <= value <= 2:
@@ -181,8 +178,10 @@ class GenderField(Field):
 
 
 class ClientIDsField(Field):
+    field_type = list
+
     def __init__(self, required):
-        super().__init__(required, False, list)
+        super().__init__(required, False)
 
     def value_check(self, value):
         error_strings = [str(v) + " is not a valid integer" for v in value if not isinstance(v, int)]
@@ -250,7 +249,7 @@ class OnlineScoreRequest(Request):
     def update_context(self, context):
         context['has'] = self.get_score_arguments().keys()
 
-    def get_response(self, store, admin):
+    def get_score(self, store, admin):
         return {"score": 42 if admin else scoring.get_score(store, **self.get_score_arguments())}
 
 
@@ -289,7 +288,7 @@ def method_handler(request, ctx, store):
         method = methods[method_request.method](method_request.arguments)
         method.validate()
         method.update_context(ctx)
-        response = method.get_response(store, method_request.is_admin)
+        response = method.get_score(store, method_request.is_admin)
 
     except ValidationError as e:
         return {"error": e.text}, INVALID_REQUEST
