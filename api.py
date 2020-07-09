@@ -225,9 +225,6 @@ class ClientsInterestsRequest(Request):
     def update_context(self, context):
         context['nclients'] = len(self.client_ids)
 
-    def get_response(self, store, admin):
-        return dict(zip(self.client_ids, map(scoring.get_interests.__get__(store), self.client_ids)))
-
 
 class OnlineScoreRequest(Request):
     first_name = CharField(required=False, nullable=True)
@@ -249,9 +246,6 @@ class OnlineScoreRequest(Request):
     def update_context(self, context):
         context['has'] = self.get_score_arguments().keys()
 
-    def get_score(self, store, admin):
-        return {"score": 42 if admin else scoring.get_score(store, **self.get_score_arguments())}
-
 
 class MethodRequest(Request):
     account = CharField(required=False, nullable=True)
@@ -263,6 +257,13 @@ class MethodRequest(Request):
     @property
     def is_admin(self):
         return self.login == ADMIN_LOGIN
+
+
+def get_score(request, store, admin):
+    if isinstance(request, OnlineScoreRequest):
+        return {"score": 42 if admin else scoring.get_score(store, **request.get_score_arguments())}
+    if isinstance(request, ClientsInterestsRequest):
+        return dict(zip(request.client_ids, map(scoring.get_interests.__get__(store), request.client_ids)))
 
 
 def check_auth(request):
@@ -288,7 +289,7 @@ def method_handler(request, ctx, store):
         method = methods[method_request.method](method_request.arguments)
         method.validate()
         method.update_context(ctx)
-        response = method.get_score(store, method_request.is_admin)
+        response = get_score(method, store, method_request.is_admin)
 
     except ValidationError as e:
         return {"error": e.text}, INVALID_REQUEST
